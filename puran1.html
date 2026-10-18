@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>PresenCoach AI - リアルタイム感度向上版</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands@0.4.0/dist/speech-commands.min.js"></script>
+    <style>
+        :root {
+            --bg-dark: #0f172a; --card-bg: #1e293b; --accent: #22d3ee; --accent-danger: #ef4444; 
+            --accent-warn: #f59e0b; --text-main: #f8fafc; --text-dim: #94a3b8;
+        }
+        body { font-family: 'Inter', 'Noto Sans JP', sans-serif; background: var(--bg-dark); color: var(--text-main); margin: 0; display: flex; height: 100vh; overflow: hidden; }
+        
+        .sidebar { width: 260px; background: #020617; border-right: 1px solid #334155; display: flex; flex-direction: column; padding: 20px; z-index: 10; }
+        .logo { font-size: 22px; font-weight: 700; color: var(--accent); margin-bottom: 40px; display: flex; align-items: center; gap: 10px; }
+        .nav-item { padding: 12px 16px; border-radius: 8px; margin-bottom: 8px; cursor: pointer; color: var(--text-dim); transition: 0.3s; display: flex; align-items: center; gap: 12px; }
+        .nav-item.active { background: rgba(34, 211, 238, 0.1); color: var(--accent); }
+        .nav-item:hover { background: rgba(255, 255, 255, 0.05); }
+
+        .main { flex: 1; position: relative; background: var(--bg-dark); overflow-y: auto; }
+        .view { display: none; padding: 40px; flex-direction: column; height: 100%; box-sizing: border-box; }
+        .view.active { display: flex; }
+
+        header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 30px; }
+        h1 { margin: 0; font-size: 28px; }
+
+        .api-key-container { background: rgba(34, 211, 238, 0.05); border: 1px solid rgba(34, 211, 238, 0.2); padding: 15px 20px; border-radius: 8px; margin-bottom: 30px; display: flex; align-items: center; gap: 15px; }
+        .api-key-container input { flex: 1; background: rgba(0,0,0,0.3); border: 1px solid #334155; color: white; padding: 10px 15px; border-radius: 6px; font-family: monospace; font-size: 14px; }
+        .api-key-container input:focus { outline: none; border-color: var(--accent); }
+        .api-key-container input:disabled { background: #1e293b; color: #64748b; cursor: not-allowed; }
+
+        .stats-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 30px; }
+        .card { background: var(--card-bg); padding: 24px; border-radius: 16px; border: 1px solid #334155; position: relative;}
+        .card-label { font-size: 14px; color: var(--text-dim); display: block; margin-bottom: 8px; }
+        .card-value { font-size: 32px; font-weight: 700; color: var(--text-main); transition: color 0.3s; }
+        .card-value span { font-size: 16px; color: var(--text-dim); font-weight: normal; margin-left: 4px; }
+        
+        .alert-pop { color: var(--accent-danger) !important; transform: scale(1.1); }
+
+        .visualizer-area { background: #020617; border-radius: 16px; height: 180px; margin-bottom: 30px; border: 1px solid #334155; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
+        .wave-container { display: flex; align-items: center; justify-content: center; height: 120px; width: 100%; }
+        .wave { width: 4px; background: var(--accent); margin: 0 4px; border-radius: 2px; transition: height 0.05s ease; height: 4px; }
+        .visualizer-text { position: absolute; bottom: 15px; font-size: 14px; color: var(--text-dim); font-weight: 600; letter-spacing: 2px; }
+
+        .record-controls { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 15px; margin-top: 20px; }
+        .btn-record { width: 80px; height: 80px; border-radius: 50%; background: var(--accent-danger); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 30px; color: white; transition: 0.3s; box-shadow: 0 0 15px rgba(239, 68, 68, 0.3); }
+        .btn-record:hover { transform: scale(1.05); }
+        .btn-record.recording { background: transparent; border: 4px solid var(--accent-danger); color: var(--accent-danger); animation: pulse 1.5s infinite; }
+        .btn-record:disabled { background: #334155; cursor: not-allowed; box-shadow: none; color: #64748b; }
+        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); } 70% { box-shadow: 0 0 0 20px rgba(239, 68, 68, 0); } 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } }
+
+        .live-transcript { margin-top: 10px; font-size: 16px; color: var(--accent); background: rgba(0,0,0,0.4); padding: 8px 16px; border-radius: 8px; min-height: 24px; max-width: 80%; text-align: center; opacity: 0; transition: opacity 0.3s; }
+
+        .loading-container { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; }
+        .loader { border: 4px solid #334155; border-top: 4px solid var(--accent); border-radius: 50%; width: 60px; height: 60px; animation: spin 1s linear infinite; margin-bottom: 20px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        .badge { background: rgba(16, 185, 129, 0.2); color: #10b981; padding: 6px 12px; border-radius: 20px; font-size: 14px; font-weight: 600; border: 1px solid #10b981; }
+        .highlight-warn { color: var(--accent-warn); }
+
+        .feedback-card { background: var(--card-bg); padding: 24px; border-radius: 16px; border: 1px solid #334155; margin-bottom: 20px;}
+        .feedback-title { font-size: 16px; font-weight: 600; margin: 0 0 15px 0; display: flex; align-items: center; gap: 8px; }
+        
+        .filler-list { list-style: none; padding: 0; margin: 0; }
+        .filler-item { display: flex; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid #334155; font-size: 15px; }
+        .filler-item:last-child { border-bottom: none; }
+        .filler-time { color: var(--accent); font-family: monospace; font-size: 16px; width: 80px; flex-shrink: 0; margin-top: 2px;}
+        .filler-word-hybrid { background: rgba(16, 185, 129, 0.2); color: #10b981; padding: 4px 10px; border-radius: 4px; margin-right: 15px; font-weight: bold; font-size: 13px; display: inline-block; text-align: center; min-width: 40px; }
+        .filler-desc { flex: 1; word-break: break-all; color: var(--text-dim); line-height: 1.6;}
+
+        .transcript-box { background: rgba(15, 23, 42, 0.5); padding: 20px; border-radius: 8px; font-size: 16px; line-height: 1.8; color: var(--text-main); max-height: 400px; overflow-y: auto; }
+        .highlight-filler { background: rgba(239, 68, 68, 0.2); color: #fca5a5; font-weight: bold; padding: 2px 6px; border-radius: 4px; border-bottom: 2px solid var(--accent-danger); display: inline-block;}
+
+        .btn-restart { margin: 0 auto; display: block; padding: 12px 30px; background: #334155; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; transition: 0.3s; }
+        .btn-restart:hover { background: #475569; }
+
+        /* 追加: コピーボタンのスタイル */
+        .btn-copy { background: #4f46e5; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; transition: 0.3s; }
+        .btn-copy:hover { background: #4338ca; }
+        .btn-copy.copied { background: #10b981; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="logo"><i class="fa-solid fa-microphone-lines"></i> PresenCoach</div>
+        <div class="nav-item active" data-target="view-practice"><i class="fa-solid fa-play"></i> 練習モード</div>
+        <div class="nav-item" data-target="view-actual"><i class="fa-solid fa-tower-broadcast"></i> 本番モード</div>
+        <div class="nav-item" data-target="view-report"><i class="fa-solid fa-chart-line"></i> 振り返りレポート</div>
+    </div>
+    
+    <div class="main">
+        <!-- 画面1: 練習モード -->
+        <div id="view-practice" class="view active">
+            <header>
+                <div>
+                    <h1>練習セッション <span>(リアルタイムAI解析)</span></h1>
+                    <div style="color: var(--text-dim); margin-top: 5px;">独自学習したTeachable MachineのAIモデルが即座にフィードバックします</div>
+                    <div id="tm-model-status" style="color: var(--accent-warn); font-size: 14px; margin-top: 8px;"><i class="fa-solid fa-spinner fa-spin"></i> 学習済みAIモデルを準備中...</div>
+                </div>
+            </header>
+
+            <div class="stats-grid-3">
+                <div class="card"><span class="card-label">タイマー</span><span id="practice-timer" class="card-value">00:00</span></div>
+                <div class="card"><span class="card-label">AI検知回数 (沈黙含む)</span><span id="practice-filler-count" class="card-value" style="color: #10b981;">0<span>回</span></span></div>
+                <div class="card"><span class="card-label">現在のアドバイス</span><span id="practice-advice" class="card-value" style="font-size: 18px; line-height: 1.5; color: var(--accent);">リラックスして始めましょう</span></div>
+            </div>
+
+            <div class="visualizer-area">
+                <div class="wave-container" id="practice-waves">
+                    <div class="wave"></div><div class="wave"></div><div class="wave"></div><div class="wave"></div>
+                    <div class="wave"></div><div class="wave"></div><div class="wave"></div><div class="wave"></div>
+                    <div class="wave"></div><div class="wave"></div><div class="wave"></div><div class="wave"></div>
+                </div>
+                <div class="visualizer-text">READY</div>
+            </div>
+
+            <div class="record-controls">
+                <button id="btn-practice-record" class="btn-record" disabled><i class="fa-solid fa-microphone"></i></button>
+                <div id="practice-status" style="font-size: 18px; font-weight: 600;">AIモデルの準備をお待ちください</div>
+                <div id="practice-transcript" class="live-transcript">（ここに字幕とアラートが表示されます）</div>
+            </div>
+        </div>
+
+        <!-- 画面2: 本番モード -->
+        <div id="view-actual" class="view">
+            <header>
+                <div>
+                    <h1>本番録音 <span>(Whisper API 高精度解析)</span></h1>
+                    <div style="color: var(--text-dim); margin-top: 5px;">バックグラウンドで録音し、終了後にOpenAIのサーバーへ送信します</div>
+                </div>
+            </header>
+
+            <div class="api-key-container">
+                <i class="fa-solid fa-key" style="color: var(--accent); font-size: 20px;"></i>
+                <div>
+                    <input type="password" id="api-key-input" placeholder="sk-proj-......................... (OpenAI APIキーを入力)">
+                    <div style="font-size: 12px; color: var(--text-dim); margin-top: 6px;">※APIキーはブラウザから直接OpenAIに送信され、どこにも保存されません。</div>
+                </div>
+            </div>
+
+            <div class="stats-grid-3">
+                <div class="card"><span class="card-label">タイマー</span><span id="actual-timer" class="card-value">00:00</span></div>
+                <div class="card" style="opacity: 0.5;"><span class="card-label">フィラー検知回数</span><span class="card-value" style="font-size: 16px; color: var(--text-dim); font-weight: normal; margin-top: 10px; display: block;">サーバーで事後解析します</span></div>
+                <div class="card" style="opacity: 0.5;"><span class="card-label">平均話速</span><span class="card-value" style="font-size: 16px; color: var(--text-dim); font-weight: normal; margin-top: 10px; display: block;">サーバーで事後解析します</span></div>
+            </div>
+
+            <div class="visualizer-area">
+                <div class="wave-container" id="actual-waves">
+                    <div class="wave"></div><div class="wave"></div><div class="wave"></div><div class="wave"></div>
+                    <div class="wave"></div><div class="wave"></div><div class="wave"></div><div class="wave"></div>
+                    <div class="wave"></div><div class="wave"></div><div class="wave"></div><div class="wave"></div>
+                </div>
+                <div class="visualizer-text">READY</div>
+            </div>
+
+            <div class="record-controls">
+                <button id="btn-actual-record" class="btn-record"><i class="fa-solid fa-microphone"></i></button>
+                <div id="actual-status" style="font-size: 18px; font-weight: 600;">マイクを許可して本番開始</div>
+            </div>
+        </div>
+
+        <div id="view-loading" class="view">
+            <div class="loading-container">
+                <div class="loader"></div>
+                <div class="loading-text" id="loading-title">データを解析中...</div>
+                <div class="loading-subtext" id="loading-desc">発話データとフィラーを集計してレポートを作成しています</div>
+            </div>
+        </div>
+
+        <!-- 画面3: 振り返りレポート -->
+        <div id="view-report" class="view">
+            <header>
+                <div>
+                    <h1>振り返りレポート</h1>
+                    <div id="report-meta" style="color: var(--text-dim); margin-top: 5px;"></div>
+                </div>
+                <!-- 追加: コピーボタン -->
+                <div style="display: flex; gap: 15px; align-items: center;">
+                    <button id="btn-copy-stats" class="btn-copy"><i class="fa-regular fa-clipboard"></i> 統計をコピー</button>
+                    <div class="badge"><i class="fa-solid fa-check-circle"></i> 解析完了</div>
+                </div>
+            </header>
+
+            <div class="stats-grid-3">
+                <div class="card"><span class="card-label">フィラー・沈黙 合計数</span><span id="report-filler-count" class="card-value highlight-warn">0<span>回</span></span></div>
+                <div class="card"><span class="card-label">発話文字数</span><span id="report-char-count" class="card-value">---<span>文字</span></span></div>
+                <div class="card"><span class="card-label">平均話速 (BPM)</span><span id="report-avg-bpm" class="card-value">---<span>文字/分</span></span></div>
+            </div>
+
+            <!-- ★追加：画面上に表示されるAIからのワンポイントフィードバック -->
+            <div id="report-summary-msg" style="background: rgba(34, 211, 238, 0.1); border: 1px solid rgba(34, 211, 238, 0.3); padding: 16px 20px; border-radius: 8px; margin-bottom: 24px; font-size: 16px; display: none; align-items: center; gap: 12px;">
+                <i class="fa-solid fa-robot" style="font-size: 24px; color: var(--accent);"></i>
+                <div id="report-summary-text" style="color: var(--text-main); line-height: 1.5;"></div>
+            </div>
+
+            <div class="feedback-card" id="practice-report-list" style="display: none;">
+                <h3 class="feedback-title"><i class="fa-solid fa-list-ul"></i> AIモデルによる検知履歴</h3>
+                <ul class="filler-list" id="report-filler-list-container"></ul>
+            </div>
+
+            <div class="feedback-card">
+                <h3 class="feedback-title" id="report-title-label"><i class="fa-solid fa-file-lines"></i> 全文文字起こし結果</h3>
+                <div id="transcript-result" class="transcript-box"></div>
+            </div>
+            
+            <button class="btn-restart" id="btn-restart-app"><i class="fa-solid fa-rotate-right"></i> 同じモードで新しくテストを始める</button>
+        </div>
+    </div>
+
+    <script>
+        let audioContext, analyser, dataArray, animationId, waveStream;
+        let timerInterval;
+        let secondsElapsed = 0;
+        let lastUsedMode = 'practice';
+
+        // 沈黙検知用の変数
+        let silenceTimeout = null;
+        let isWaitingForSpeech = false;
+        
+        // 追加: コピー用のデータ保持変数
+        let currentReportData = {};
+
+        const navItems = document.querySelectorAll('.nav-item');
+        const views = document.querySelectorAll('.view');
+        navItems.forEach(item => {
+            item.addEventListener('click', () => {
+                navItems.forEach(n => n.classList.remove('active'));
+                item.classList.add('active');
+                const targetId = item.getAttribute('data-target');
+                views.forEach(v => v.classList.remove('active'));
+                document.getElementById(targetId).classList.add('active');
+            });
+        });
+
+        const TM_URL = "https://teachablemachine.withgoogle.com/models/Vkg5Un3Nc/";
+        let recognizer, isModelLoaded = false, isPracticeRecording = false;
+        let practiceFillerCount = 0, lastFillerTimeMs = 0, practiceDetectedFillers = []; 
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        let speechRecog = null, currentSubtitle = "", isShowingPracticeAlert = false;
+        let practiceAllTranscripts = [], practiceSpeechStartTime = 0, isSpeaking = false;          
+        
+        let lastInterimEttoCount = 0;
+
+        const btnPracticeRecord = document.getElementById('btn-practice-record');
+        const countDisplay = document.getElementById('practice-filler-count');
+        const adviceDisplay = document.getElementById('practice-advice');
+        const liveTranscriptDiv = document.getElementById('practice-transcript');
+        const tmModelStatus = document.getElementById('tm-model-status');
+
+        function resetSilenceTimer() {
+            if (silenceTimeout) clearTimeout(silenceTimeout);
+            isWaitingForSpeech = false;
+            if (!isPracticeRecording) return;
+            
+            silenceTimeout = setTimeout(() => {
+                if (!isPracticeRecording || isWaitingForSpeech) return;
+                
+                practiceFillerCount++;
+                countDisplay.innerHTML = `${practiceFillerCount}<span>回</span>`;
+                countDisplay.classList.add('alert-pop');
+                setTimeout(() => countDisplay.classList.remove('alert-pop'), 300);
+                countDisplay.style.color = "var(--accent-warn)";
+
+                practiceDetectedFillers.push({
+                    time: secondsElapsed,
+                    word: "沈黙(4秒)",
+                    context: currentSubtitle,
+                    text: `（4秒以上の無音・言葉の詰まりを検知しました）`
+                });
+
+                isShowingPracticeAlert = true;
+                liveTranscriptDiv.innerText = `⚡AIが「4秒以上の沈黙」を検知しました！`;
+                liveTranscriptDiv.style.color = "var(--accent-warn)";
+                adviceDisplay.innerText = "言葉に詰まっています。落ち着いて再開しましょう。";
+                adviceDisplay.style.color = "var(--accent-warn)";
+
+                setTimeout(() => {
+                    isShowingPracticeAlert = false;
+                    if(isPracticeRecording) {
+                        liveTranscriptDiv.style.color = "var(--accent)";
+                        liveTranscriptDiv.innerText = currentSubtitle || "（音声を監視中...）";
+                    }
+                }, 2000);
+
+                isWaitingForSpeech = true;
+            }, 4000);
+        }
+
+        // 文字起こしベースで「えっと」を見つけた場合に強制アラートを出す関数
+        function triggerTextFillerAlert(contextText) {
+            const nowMs = Date.now();
+            practiceFillerCount++;
+            countDisplay.innerHTML = `${practiceFillerCount}<span>回</span>`;
+            countDisplay.classList.add('alert-pop');
+            setTimeout(() => countDisplay.classList.remove('alert-pop'), 300);
+            countDisplay.style.color = "var(--accent-danger)";
+            
+            const displayTime = isSpeaking ? practiceSpeechStartTime : secondsElapsed;
+            practiceDetectedFillers.push({
+                time: displayTime, word: "えっと", context: contextText, 
+                text: `（AI見逃しを文字起こしから補完検知しました）`
+            });
+            
+            isShowingPracticeAlert = true;
+            liveTranscriptDiv.innerText = `⚡文字起こしから「えっと」を検知！`;
+            liveTranscriptDiv.style.color = "var(--accent-danger)";
+            adviceDisplay.innerText = "口癖が出ています。一度間を取りましょう。";
+            adviceDisplay.style.color = "var(--accent-danger)";
+            
+            setTimeout(() => {
+                isShowingPracticeAlert = false;
+                if(isPracticeRecording) { 
+                    liveTranscriptDiv.style.color = "var(--accent)"; 
+                    liveTranscriptDiv.innerText = currentSubtitle || "（監視中...）"; 
+                }
+            }, 2000);
+            
+            lastFillerTimeMs = nowMs;
+        }
+
+        async function initTMModel() {
+            const t = new Date().getTime();
+            try {
+                recognizer = speechCommands.create("BROWSER_FFT", undefined, TM_URL + "model.json?t=" + t, TM_URL + "metadata.json?t=" + t);
+                await recognizer.ensureModelLoaded();
+                isModelLoaded = true;
+                tmModelStatus.innerHTML = '<i class="fa-solid fa-check"></i> 学習済みAIモデルの読み込み完了';
+                tmModelStatus.style.color = "#10b981";
+                btnPracticeRecord.disabled = false;
+                document.getElementById('practice-status').innerText = "マイクを許可して練習開始";
+            } catch (e) {
+                tmModelStatus.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> AIモデルの読み込み失敗';
+                tmModelStatus.style.color = "var(--accent-danger)";
+            }
+        }
+        window.onload = initTMModel;
+
+        if (SpeechRecognition) {
+            speechRecog = new SpeechRecognition();
+            speechRecog.lang = 'ja-JP';
+            speechRecog.continuous = true;
+            speechRecog.interimResults = true;
+            speechRecog.onresult = (event) => {
+                let interimTranscript = '', finalTranscript = '';
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const t = event.results[i][0].transcript;
+                    if (!isSpeaking) { practiceSpeechStartTime = secondsElapsed; isSpeaking = true; }
+                    
+                    if (event.results[i].isFinal) {
+                        finalTranscript += t;
+                        practiceAllTranscripts.push({ time: practiceSpeechStartTime, endTime: secondsElapsed, text: t });
+                        isSpeaking = false; 
+
+                        const ettoCount = (t.match(/えっと/g) || []).length;
+                        if (ettoCount > 0 && Date.now() - lastFillerTimeMs > 1500) {
+                            triggerTextFillerAlert(t);
+                        }
+                    } else {
+                        interimTranscript += t;
+                    }
+                }
+                currentSubtitle = interimTranscript !== '' ? interimTranscript : finalTranscript;
+                
+                if (interimTranscript !== '') {
+                    const currentEttoCount = (interimTranscript.match(/えっと/g) || []).length;
+                    if (currentEttoCount > lastInterimEttoCount) {
+                        if (Date.now() - lastFillerTimeMs > 1500) {
+                            triggerTextFillerAlert(interimTranscript);
+                        }
+                    }
+                    lastInterimEttoCount = currentEttoCount;
+                } else {
+                    lastInterimEttoCount = 0;
+                }
+
+                resetSilenceTimer(); 
+                
+                if (!isShowingPracticeAlert && currentSubtitle !== '') {
+                    liveTranscriptDiv.innerText = currentSubtitle;
+                    liveTranscriptDiv.style.color = "var(--accent)";
+                }
+            };
+            speechRecog.onend = () => { if (isPracticeRecording) try { speechRecog.start(); } catch(e) {} };
+        }
+
+        btnPracticeRecord.addEventListener('click', async () => {
+            if (!isModelLoaded) return;
+            if (!isPracticeRecording) {
+                try {
+                    waveStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    setupAudioContext();
+                    
+                    isPracticeRecording = true; lastUsedMode = 'practice';
+                    btnPracticeRecord.classList.add('recording');
+                    btnPracticeRecord.innerHTML = '<i class="fa-solid fa-stop"></i>';
+                    document.getElementById('practice-status').innerText = "練習中... (AIが監視しています)";
+                    
+                    liveTranscriptDiv.style.opacity = 1;
+                    liveTranscriptDiv.innerText = "（声を出すと字幕が表示されます）";
+                    liveTranscriptDiv.style.color = "var(--text-dim)";
+                    
+                    practiceFillerCount = 0; practiceDetectedFillers = []; practiceAllTranscripts = [];
+                    currentSubtitle = ""; isShowingPracticeAlert = false;
+                    practiceSpeechStartTime = 0; isSpeaking = false; 
+                    lastInterimEttoCount = 0; 
+                    
+                    countDisplay.innerHTML = `0<span>回</span>`;
+                    countDisplay.style.color = "var(--text-main)";
+                    adviceDisplay.innerText = "リラックスして進めましょう";
+                    adviceDisplay.style.color = "var(--accent)";
+
+                    if (speechRecog) try { speechRecog.start(); } catch(e) {}
+                    startTimer('practice-timer');
+                    animateWaves('practice-waves');
+                    resetSilenceTimer();
+
+                    recognizer.listen(result => {
+                        const scores = result.scores;
+                        const labels = recognizer.wordLabels();
+                        
+                        const thresholds = {
+                            "あー": 0.88,
+                            "えー": 0.95,
+                            "えっと": 0.85
+                        };
+                        const defaultThreshold = 0.88; 
+
+                        let maxScore = 0;
+                        let detectedWord = "";
+                        let isDetected = false;
+                        
+                        for (let i = 0; i < labels.length; i++) {
+                            const label = labels[i];
+                            const score = scores[i];
+
+                            if (label === "フィラー" || label.includes("あー") || label.includes("えー") || label.includes("えっと")) {
+                                let currentThreshold = defaultThreshold;
+                                if (label.includes("あー")) currentThreshold = thresholds["あー"];
+                                else if (label.includes("えー")) currentThreshold = thresholds["えー"];
+                                else if (label.includes("えっと")) currentThreshold = thresholds["えっと"];
+
+                                if (score >= currentThreshold && score > maxScore) {
+                                    maxScore = score;
+                                    detectedWord = label;
+                                    isDetected = true;
+                                }
+                            }
+                        }
+
+                        if (isDetected) {
+                            const recentText = currentSubtitle.slice(-5).toUpperCase();
+                            if (detectedWord.includes("えー") && recentText.includes("AI")) {
+                                isDetected = false; 
+                            }
+                            
+                            if (isDetected) {
+                                const fillerScore = maxScore;
+                                const nowMs = Date.now();
+                                if (nowMs - lastFillerTimeMs > 1500) {
+                                    practiceFillerCount++;
+                                    countDisplay.innerHTML = `${practiceFillerCount}<span>回</span>`;
+                                    countDisplay.classList.add('alert-pop');
+                                    setTimeout(() => countDisplay.classList.remove('alert-pop'), 300);
+                                    countDisplay.style.color = "var(--accent-danger)";
+                                    
+                                    const displayTime = isSpeaking ? practiceSpeechStartTime : secondsElapsed;
+                                    practiceDetectedFillers.push({
+                                        time: displayTime, word: detectedWord || "あー", context: currentSubtitle, 
+                                        text: `（AI確信度：${Math.round(fillerScore*100)}% / 直前: ${currentSubtitle || "なし"}）`
+                                    });
+                                    isShowingPracticeAlert = true;
+                                    liveTranscriptDiv.innerText = `⚡AIが「${detectedWord || "あー"}」を検知！（確信度${Math.round(fillerScore*100)}%）`;
+                                    liveTranscriptDiv.style.color = "var(--accent-danger)";
+                                    adviceDisplay.innerText = "口癖が出ています。一度間を取りましょう。";
+                                    adviceDisplay.style.color = "var(--accent-danger)";
+                                    
+                                    setTimeout(() => {
+                                        isShowingPracticeAlert = false;
+                                        if(isPracticeRecording) { liveTranscriptDiv.style.color = "var(--accent)"; liveTranscriptDiv.innerText = currentSubtitle || "（監視中...）"; }
+                                    }, 2000);
+                                    lastFillerTimeMs = nowMs;
+                                }
+                            }
+                        }
+                    }, { includeSpectrogram: true, probabilityThreshold: 0.1, invokeCallbackOnNoiseAndUnknown: true, overlapFactor: 0.75 });
+                } catch(e) { alert("マイクへのアクセスが拒否されました。"); }
+            } else {
+                isPracticeRecording = false;
+                btnPracticeRecord.classList.remove('recording');
+                btnPracticeRecord.innerHTML = '<i class="fa-solid fa-microphone"></i>';
+                document.getElementById('practice-status').innerText = "マイクを許可して練習開始";
+                liveTranscriptDiv.style.opacity = 0;
+                
+                if (speechRecog) speechRecog.stop();
+                recognizer.stopListening();
+                stopRecording();
+
+                document.getElementById('loading-title').innerText = "練習データを集計中...";
+                document.getElementById('view-practice').classList.remove('active');
+                document.getElementById('view-loading').classList.add('active');
+                
+                setTimeout(() => {
+                    document.getElementById('view-loading').classList.remove('active');
+                    document.getElementById('view-report').classList.add('active');
+                    navItems.forEach(n => n.classList.remove('active'));
+                    document.querySelector('[data-target="view-report"]').classList.add('active');
+                    displayPracticeReport();
+                }, 2500);
+            }
+        });
+
+        // 本番モード用
+        let mediaRecorderActual, audioChunks = [], isActualRecording = false;
+        const btnActualRecord = document.getElementById('btn-actual-record'), apiKeyInput = document.getElementById('api-key-input');
+
+        btnActualRecord.addEventListener('click', async () => {
+            const apiKey = apiKeyInput.value.replace(/[\s\u3000]+/g, '');
+            if (!apiKey.startsWith('sk-')) return alert("正しいAPIキーを入力してください！");
+
+            if (!isActualRecording) {
+                try {
+                    waveStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    mediaRecorderActual = new MediaRecorder(waveStream);
+                    audioChunks = [];
+                    mediaRecorderActual.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
+                    mediaRecorderActual.onstop = processWhisperAudio;
+                    mediaRecorderActual.start();
+                    
+                    isActualRecording = true; lastUsedMode = 'actual';
+                    btnActualRecord.classList.add('recording');
+                    btnActualRecord.innerHTML = '<i class="fa-solid fa-stop"></i>';
+                    document.getElementById('actual-status').innerText = "本番録音中... (もう一度押して終了)";
+                    document.getElementById('actual-status').style.color = "var(--accent-danger)";
+                    apiKeyInput.disabled = true; 
+                    
+                    setupAudioContext(); startTimer('actual-timer'); animateWaves('actual-waves');
+                } catch(e) { alert("マイクへのアクセスが拒否されました。"); }
+            } else {
+                mediaRecorderActual.stop();
+                isActualRecording = false;
+                btnActualRecord.classList.remove('recording');
+                btnActualRecord.innerHTML = '<i class="fa-solid fa-microphone"></i>';
+                document.getElementById('actual-status').innerText = "マイクを許可して本番開始";
+                document.getElementById('actual-status').style.color = "var(--text-main)";
+                apiKeyInput.disabled = false;
+                stopRecording();
+                document.getElementById('view-actual').classList.remove('active');
+                document.getElementById('view-loading').classList.add('active');
+            }
+        });
+
+        async function processWhisperAudio() {
+            const apiKey = document.getElementById('api-key-input').value.replace(/[\s\u3000]+/g, '');
+            const formData = new FormData();
+            formData.append('file', new Blob(audioChunks, { type: 'audio/webm' }), 'recording.webm');
+            formData.append('model', 'whisper-1');
+            formData.append('language', 'ja');
+            formData.append('response_format', 'verbose_json'); 
+            formData.append('prompt', 'えー、本日はお忙しい中、あのー、あー、お集まりいただき、えっと、えっとー、ありがとうございます。');
+            
+            try {
+                const response = await fetch('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { 'Authorization': `Bearer ${apiKey}` }, body: formData });
+                if (!response.ok) throw new Error("APIリクエストに失敗しました");
+                
+                const data = await response.json();
+                displayWhisperReport(data);
+            } catch (error) {
+                alert(`エラー: ${error.message}`);
+                document.getElementById('view-loading').classList.remove('active');
+                document.getElementById('view-actual').classList.add('active');
+            }
+        }
+
+        function displayPracticeReport() {
+            const m = Math.floor(secondsElapsed / 60).toString().padStart(2, '0');
+            const s = (secondsElapsed % 60).toString().padStart(2, '0');
+            document.getElementById('report-meta').innerText = `収録日: ${new Date().toLocaleDateString('ja-JP')} / 録音時間: ${m}:${s} (練習モード)`;
+            
+            document.getElementById('practice-report-list').style.display = 'block';
+            const listContainer = document.getElementById('report-filler-list-container');
+            listContainer.innerHTML = '';
+
+            // フィラーの種類ごとのカウント
+            let counts = { "えー": 0, "あー": 0, "えっと": 0, "沈黙": 0, "その他": 0 };
+
+            if (practiceDetectedFillers.length === 0) {
+                listContainer.innerHTML = '<li class="filler-item" style="color: var(--text-dim);">検知されませんでした。完璧なペースです！</li>';
+            } else {
+                practiceDetectedFillers.forEach(filler => {
+                    const fm = Math.floor(filler.time / 60).toString().padStart(2, '0');
+                    const fs = (filler.time % 60).toString().padStart(2, '0');
+                    listContainer.innerHTML += `<li class="filler-item"><span class="filler-time">${fm}:${fs}</span><div style="flex:1;"><span class="filler-word-hybrid">${filler.word}</span><span class="filler-desc">${filler.text}</span></div></li>`;
+                    
+                    // カウントの集計
+                    if(filler.word.includes("えー")) counts["えー"]++;
+                    else if(filler.word.includes("あー")) counts["あー"]++;
+                    else if(filler.word.includes("えっと")) counts["えっと"]++;
+                    else if(filler.word.includes("沈黙")) counts["沈黙"]++;
+                    else counts["その他"]++;
+                });
+            }
+
+            let charCount = 0, fullTextHtmlArray = [], processedFillerIndices = new Set(); 
+            if (practiceAllTranscripts.length === 0) {
+                practiceDetectedFillers.forEach(f => {
+                    const tm = Math.floor(f.time / 60).toString().padStart(2, '0');
+                    const ts = (f.time % 60).toString().padStart(2, '0');
+                    fullTextHtmlArray.push(`<div style="margin-bottom: 8px;"><span style="color:var(--text-dim); margin-right:10px; font-family:monospace;">${tm}:${ts}</span><span class="highlight-filler">${f.word}</span></div>`);
+                });
+                if(fullTextHtmlArray.length === 0) fullTextHtmlArray.push('（音声が認識されませんでした）');
+            } else {
+                practiceAllTranscripts.forEach((t, index) => {
+                    charCount += t.text.length;
+                    const tm = Math.floor(t.time / 60).toString().padStart(2, '0');
+                    const ts = (t.time % 60).toString().padStart(2, '0');
+                    const startTime = (index === 0) ? 0 : t.time;
+                    const nextTime = (index + 1 < practiceAllTranscripts.length) ? practiceAllTranscripts[index + 1].time : secondsElapsed + 1;
+                    
+                    const fillersInThisSegment = practiceDetectedFillers.filter((f, i) => {
+                        if (processedFillerIndices.has(i)) return false;
+                        return (index + 1 === practiceAllTranscripts.length) ? f.time >= startTime : f.time >= startTime && f.time < nextTime;
+                    });
+
+                    let modifiedText = t.text, inlineFillersHtml = '', independentFillersHtmlArray = [];
+                    fillersInThisSegment.forEach((f) => {
+                        let context = f.context.replace(/[あーえー]+$/, '').trim();
+                        if (context.length > 10) context = context.slice(-10);
+                        let insertIndex = context !== "" ? modifiedText.indexOf(context) : -1;
+                        if (insertIndex !== -1) insertIndex += context.length;
+                        
+                        if (insertIndex !== -1) {
+                            modifiedText = modifiedText.slice(0, insertIndex) + `<span class="highlight-filler" style="margin-left: 2px; margin-right: 2px;">${f.word}</span>` + modifiedText.slice(insertIndex);
+                        } else {
+                            const refTime = t.endTime !== undefined ? t.endTime : t.time;
+                            if (f.time - refTime <= 2.5) inlineFillersHtml += `<span class="highlight-filler" style="margin-left: 8px;">${f.word}</span>`;
+                            else independentFillersHtmlArray.push(`<div style="margin-bottom: 8px;"><span style="color:var(--text-dim); margin-right:10px; font-family:monospace;">${Math.floor(f.time/60).toString().padStart(2,'0')}:${(f.time%60).toString().padStart(2,'0')}</span><span class="highlight-filler">${f.word}</span></div>`);
+                        }
+                        processedFillerIndices.add(practiceDetectedFillers.indexOf(f));
+                    });
+                    fullTextHtmlArray.push(`<div style="margin-bottom: 8px;"><span style="color:var(--text-dim); margin-right:10px; font-family:monospace;">${tm}:${ts}</span>${modifiedText}${inlineFillersHtml}</div>`);
+                    fullTextHtmlArray = fullTextHtmlArray.concat(independentFillersHtmlArray);
+                });
+                practiceDetectedFillers.forEach((f, index) => {
+                    if (!processedFillerIndices.has(index)) fullTextHtmlArray.push(`<div style="margin-bottom: 8px;"><span style="color:var(--text-dim); margin-right:10px; font-family:monospace;">${Math.floor(f.time/60).toString().padStart(2,'0')}:${(f.time%60).toString().padStart(2,'0')}</span><span class="highlight-filler">${f.word}</span></div>`);
+                });
+            }
+
+            const bpm = secondsElapsed > 0 ? Math.round((charCount / secondsElapsed) * 60) : 0;
+            document.getElementById('transcript-result').innerHTML = fullTextHtmlArray.join('');
+            document.getElementById('report-filler-count').innerHTML = `${practiceFillerCount}<span>回</span>`;
+            document.getElementById('report-char-count').innerHTML = `${charCount}<span>文字</span>`;
+            document.getElementById('report-avg-bpm').innerHTML = `${bpm}<span>文字/分</span>`;
+            document.getElementById('report-title-label').innerHTML = '<i class="fa-solid fa-file-lines"></i> 練習の全文文字起こし（AI検知フィラー統合版）';
+
+            // コピー用データの作成と画面へのサマリー表示
+            let mostFrequent = "なし";
+            let maxCount = 0;
+            for (let word in counts) {
+                if(word !== "沈黙" && word !== "その他" && counts[word] > maxCount) {
+                    maxCount = counts[word];
+                    mostFrequent = word;
+                }
+            }
+
+            let comment = "";
+            if (practiceFillerCount === 0) {
+                comment = "完璧なペースです！フィラーは一度も検知されませんでした。";
+            } else if (maxCount > 0) {
+                comment = `全体で${practiceFillerCount}回のフィラー・沈黙がありました。特に「${mostFrequent}」というフィラーが${maxCount}回と一番多かったです。`;
+            } else if (counts["沈黙"] > 0) {
+                comment = `全体で${practiceFillerCount}回のアラートがありました。言葉に詰まる（沈黙する）癖が見られます。`;
+            }
+
+            // ★画面上にコメントを表示
+            document.getElementById('report-summary-text').innerText = comment;
+            document.getElementById('report-summary-msg').style.display = 'flex';
+
+            currentReportData = {
+                mode: "練習モード",
+                time: `${m}分${s}秒`,
+                charCount: charCount,
+                bpm: bpm,
+                totalFillers: practiceFillerCount,
+                details: counts,
+                comment: comment
+            };
+        }
+
+        function displayWhisperReport(whisperData) {
+            document.getElementById('view-loading').classList.remove('active');
+            document.getElementById('view-report').classList.add('active');
+            navItems.forEach(n => n.classList.remove('active'));
+            document.querySelector('[data-target="view-report"]').classList.add('active');
+            document.getElementById('practice-report-list').style.display = 'none';
+            document.getElementById('report-summary-msg').style.display = 'none';
+
+            let fillerCount = 0;
+            let fullTextHtmlArray = [];
+            let fullRawText = "";
+
+            if (whisperData.segments && whisperData.segments.length > 0) {
+                whisperData.segments.forEach(segment => {
+                    const startSec = Math.floor(segment.start);
+                    const m = Math.floor(startSec / 60).toString().padStart(2, '0');
+                    const s = (startSec % 60).toString().padStart(2, '0');
+                    
+                    fullRawText += segment.text;
+
+                    const highlightedText = segment.text.replace(/(あー+|えー+|あのー+|えっとー+|えっと+|んー+|うー+|おー+)/g, (match) => { 
+                        fillerCount++; 
+                        return `<span class="highlight-filler">${match}</span>`; 
+                    });
+
+                    fullTextHtmlArray.push(`<div style="margin-bottom: 8px;"><span style="color:var(--text-dim); margin-right:10px; font-family:monospace;">${m}:${s}</span>${highlightedText}</div>`);
+                });
+            } else {
+                fullTextHtmlArray.push("（音声が認識されませんでした）");
+            }
+
+            document.getElementById('transcript-result').innerHTML = fullTextHtmlArray.join('');
+            document.getElementById('report-meta').innerText = `収録日: ${new Date().toLocaleDateString('ja-JP')} / 録音時間: ${Math.floor(secondsElapsed / 60).toString().padStart(2, '0')}:${(secondsElapsed % 60).toString().padStart(2, '0')} (本番モード)`;
+
+            const charCount = fullRawText.replace(/\s+/g, '').length;
+            document.getElementById('report-filler-count').innerHTML = `${fillerCount}<span>回</span>`;
+            document.getElementById('report-char-count').innerHTML = `${charCount}<span>文字</span>`;
+            document.getElementById('report-avg-bpm').innerHTML = `${secondsElapsed > 0 ? Math.round((charCount / secondsElapsed) * 60) : 0}<span>文字/分</span>`;
+            document.getElementById('report-title-label').innerHTML = '<i class="fa-solid fa-file-lines"></i> 本番の全文文字起こし（Whisper API 高精度抽出結果）';
+        }
+
+        // コピーボタンの処理
+        document.getElementById('btn-copy-stats').addEventListener('click', function() {
+            const data = currentReportData;
+            if (!data.mode) return;
+
+            const textToCopy = `【PresenCoach 測定結果】
+モード: ${data.mode}
+録音時間: ${data.time}
+発話文字数: ${data.charCount} 文字
+平均話速: ${data.bpm} BPM
+
+フィラー・沈黙の合計: ${data.totalFillers} 回
+（内訳）
+・えー: ${data.details["えー"]}回
+・あー: ${data.details["あー"]}回
+・えっと: ${data.details["えっと"]}回
+・沈黙: ${data.details["沈黙"]}回
+
+★AIからのコメント
+${data.comment}`;
+
+            navigator.clipboard.writeText(textToCopy).then(() => {
+                const btn = document.getElementById('btn-copy-stats');
+                const originalHtml = btn.innerHTML;
+                btn.classList.add('copied');
+                btn.innerHTML = '<i class="fa-solid fa-check"></i> コピーしました！';
+                setTimeout(() => {
+                    btn.classList.remove('copied');
+                    btn.innerHTML = originalHtml;
+                }, 2000);
+            });
+        });
+
+        document.getElementById('btn-restart-app').addEventListener('click', () => {
+            document.getElementById('view-report').classList.remove('active');
+            navItems.forEach(n => n.classList.remove('active'));
+            document.getElementById(`view-${lastUsedMode}`).classList.add('active');
+            document.querySelector(`[data-target="view-${lastUsedMode}"]`).classList.add('active');
+            currentReportData = {}; // データクリア
+        });
+
+        function setupAudioContext() {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            analyser = audioContext.createAnalyser(); analyser.fftSize = 32; 
+            audioContext.createMediaStreamSource(waveStream).connect(analyser);
+            dataArray = new Uint8Array(analyser.frequencyBinCount);
+        }
+
+        function animateWaves(containerId) {
+            const waves = document.getElementById(containerId).querySelectorAll('.wave');
+            function renderFrame() {
+                animationId = requestAnimationFrame(renderFrame);
+                if(analyser) {
+                    analyser.getByteFrequencyData(dataArray);
+                    for (let i = 0; i < waves.length; i++) waves[i].style.height = `${10 + (dataArray[i] / 255) * 80}px`;
+                }
+            }
+            renderFrame();
+        }
+
+        function startTimer(displayId) {
+            secondsElapsed = 0;
+            const display = document.getElementById(displayId); display.innerText = "00:00";
+            timerInterval = setInterval(() => {
+                secondsElapsed++;
+                display.innerText = `${Math.floor(secondsElapsed / 60).toString().padStart(2, '0')}:${(secondsElapsed % 60).toString().padStart(2, '0')}`;
+            }, 1000);
+        }
+
+        function stopRecording() {
+            clearInterval(timerInterval);
+            if (silenceTimeout) clearTimeout(silenceTimeout);
+            if (animationId) cancelAnimationFrame(animationId);
+            if (waveStream) waveStream.getTracks().forEach(track => track.stop());
+            if (audioContext && audioContext.state !== 'closed') audioContext.close();
+            document.querySelectorAll('.wave').forEach(w => w.style.height = '4px');
+        }
+    </script>
+</body>
+</html>
