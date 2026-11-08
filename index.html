@@ -77,7 +77,6 @@
         .btn-restart { margin: 0 auto; display: block; padding: 12px 30px; background: #334155; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; transition: 0.3s; }
         .btn-restart:hover { background: #475569; }
 
-        /* 追加: コピーボタンのスタイル */
         .btn-copy { background: #4f46e5; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; transition: 0.3s; }
         .btn-copy:hover { background: #4338ca; }
         .btn-copy.copied { background: #10b981; }
@@ -177,7 +176,6 @@
                     <h1>振り返りレポート</h1>
                     <div id="report-meta" style="color: var(--text-dim); margin-top: 5px;"></div>
                 </div>
-                <!-- 追加: コピーボタン -->
                 <div style="display: flex; gap: 15px; align-items: center;">
                     <button id="btn-copy-stats" class="btn-copy"><i class="fa-regular fa-clipboard"></i> 統計をコピー</button>
                     <div class="badge"><i class="fa-solid fa-check-circle"></i> 解析完了</div>
@@ -190,7 +188,6 @@
                 <div class="card"><span class="card-label">平均話速 (BPM)</span><span id="report-avg-bpm" class="card-value">---<span>文字/分</span></span></div>
             </div>
 
-            <!-- ★追加：画面上に表示されるAIからのワンポイントフィードバック -->
             <div id="report-summary-msg" style="background: rgba(34, 211, 238, 0.1); border: 1px solid rgba(34, 211, 238, 0.3); padding: 16px 20px; border-radius: 8px; margin-bottom: 24px; font-size: 16px; display: none; align-items: center; gap: 12px;">
                 <i class="fa-solid fa-robot" style="font-size: 24px; color: var(--accent);"></i>
                 <div id="report-summary-text" style="color: var(--text-main); line-height: 1.5;"></div>
@@ -216,11 +213,8 @@
         let secondsElapsed = 0;
         let lastUsedMode = 'practice';
 
-        // 沈黙検知用の変数
         let silenceTimeout = null;
         let isWaitingForSpeech = false;
-        
-        // 追加: コピー用のデータ保持変数
         let currentReportData = {};
 
         const navItems = document.querySelectorAll('.nav-item');
@@ -242,7 +236,7 @@
         let speechRecog = null, currentSubtitle = "", isShowingPracticeAlert = false;
         let practiceAllTranscripts = [], practiceSpeechStartTime = 0, isSpeaking = false;          
         
-        let lastInterimEttoCount = 0;
+        let lastInterimFillerCount = 0;
 
         const btnPracticeRecord = document.getElementById('btn-practice-record');
         const countDisplay = document.getElementById('practice-filler-count');
@@ -265,9 +259,7 @@
                 countDisplay.style.color = "var(--accent-warn)";
 
                 practiceDetectedFillers.push({
-                    time: secondsElapsed,
-                    word: "沈黙(4秒)",
-                    context: currentSubtitle,
+                    time: secondsElapsed, word: "沈黙(4秒)", context: currentSubtitle,
                     text: `（4秒以上の無音・言葉の詰まりを検知しました）`
                 });
 
@@ -289,8 +281,8 @@
             }, 4000);
         }
 
-        // 文字起こしベースで「えっと」を見つけた場合に強制アラートを出す関数
-        function triggerTextFillerAlert(contextText) {
+        // 字幕(テキスト)からの補完アラート
+        function triggerTextFillerAlert(contextText, detectedWord) {
             const nowMs = Date.now();
             practiceFillerCount++;
             countDisplay.innerHTML = `${practiceFillerCount}<span>回</span>`;
@@ -300,12 +292,12 @@
             
             const displayTime = isSpeaking ? practiceSpeechStartTime : secondsElapsed;
             practiceDetectedFillers.push({
-                time: displayTime, word: "えっと", context: contextText, 
-                text: `（AI見逃しを文字起こしから補完検知しました）`
+                time: displayTime, word: detectedWord, context: contextText, 
+                text: `（AI見逃しを字幕から補完検知しました）`
             });
             
             isShowingPracticeAlert = true;
-            liveTranscriptDiv.innerText = `⚡文字起こしから「えっと」を検知！`;
+            liveTranscriptDiv.innerText = `⚡字幕から「${detectedWord}」を検知！`;
             liveTranscriptDiv.style.color = "var(--accent-danger)";
             adviceDisplay.innerText = "口癖が出ています。一度間を取りましょう。";
             adviceDisplay.style.color = "var(--accent-danger)";
@@ -343,6 +335,11 @@
             speechRecog.lang = 'ja-JP';
             speechRecog.continuous = true;
             speechRecog.interimResults = true;
+
+            speechRecog.onerror = (event) => {
+                console.warn("Web Speech API エラー発生:", event.error);
+            };
+
             speechRecog.onresult = (event) => {
                 let interimTranscript = '', finalTranscript = '';
                 for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -354,9 +351,20 @@
                         practiceAllTranscripts.push({ time: practiceSpeechStartTime, endTime: secondsElapsed, text: t });
                         isSpeaking = false; 
 
-                        const ettoCount = (t.match(/えっと/g) || []).length;
-                        if (ettoCount > 0 && Date.now() - lastFillerTimeMs > 1500) {
-                            triggerTextFillerAlert(t);
+                        const matches = t.match(/(まあ|えー|えっと)/g);
+                        if (matches && matches.length > 0) {
+                            const detectedWord = matches[matches.length - 1]; 
+                            if (Date.now() - lastFillerTimeMs > 1500) {
+                                let shouldTrigger = true;
+                                if (detectedWord === "えー") {
+                                    const cleanText = t.slice(0, t.lastIndexOf("えー")).replace(/[、。！？\s]/g, "");
+                                    const lastChar = cleanText.slice(-1);
+                                    const e_row_kana = /[えけげせぜてでねへべぺめれ]/;
+                                    if (e_row_kana.test(lastChar)) shouldTrigger = false;
+                                    if (t.slice(-5).toUpperCase().includes("AI")) shouldTrigger = false;
+                                }
+                                if (shouldTrigger) triggerTextFillerAlert(t, detectedWord);
+                            }
                         }
                     } else {
                         interimTranscript += t;
@@ -365,15 +373,25 @@
                 currentSubtitle = interimTranscript !== '' ? interimTranscript : finalTranscript;
                 
                 if (interimTranscript !== '') {
-                    const currentEttoCount = (interimTranscript.match(/えっと/g) || []).length;
-                    if (currentEttoCount > lastInterimEttoCount) {
+                    const matches = interimTranscript.match(/(まあ|えー|えっと)/g);
+                    const currentCount = matches ? matches.length : 0;
+                    if (currentCount > lastInterimFillerCount) {
+                        const detectedWord = matches[currentCount - 1];
                         if (Date.now() - lastFillerTimeMs > 1500) {
-                            triggerTextFillerAlert(interimTranscript);
+                             let shouldTrigger = true;
+                             if (detectedWord === "えー") {
+                                 const cleanText = interimTranscript.slice(0, interimTranscript.lastIndexOf("えー")).replace(/[、。！？\s]/g, "");
+                                 const lastChar = cleanText.slice(-1);
+                                 const e_row_kana = /[えけげせぜてでねへべぺめれ]/;
+                                 if (e_row_kana.test(lastChar)) shouldTrigger = false;
+                                 if (interimTranscript.slice(-5).toUpperCase().includes("AI")) shouldTrigger = false;
+                             }
+                             if (shouldTrigger) triggerTextFillerAlert(interimTranscript, detectedWord);
                         }
                     }
-                    lastInterimEttoCount = currentEttoCount;
+                    lastInterimFillerCount = currentCount;
                 } else {
-                    lastInterimEttoCount = 0;
+                    lastInterimFillerCount = 0;
                 }
 
                 resetSilenceTimer(); 
@@ -383,7 +401,14 @@
                     liveTranscriptDiv.style.color = "var(--accent)";
                 }
             };
-            speechRecog.onend = () => { if (isPracticeRecording) try { speechRecog.start(); } catch(e) {} };
+
+            speechRecog.onend = () => { 
+                if (isPracticeRecording) {
+                    setTimeout(() => {
+                        try { speechRecog.start(); } catch(e) {}
+                    }, 100);
+                }
+            };
         }
 
         btnPracticeRecord.addEventListener('click', async () => {
@@ -405,7 +430,7 @@
                     practiceFillerCount = 0; practiceDetectedFillers = []; practiceAllTranscripts = [];
                     currentSubtitle = ""; isShowingPracticeAlert = false;
                     practiceSpeechStartTime = 0; isSpeaking = false; 
-                    lastInterimEttoCount = 0; 
+                    lastInterimFillerCount = 0; 
                     
                     countDisplay.innerHTML = `0<span>回</span>`;
                     countDisplay.style.color = "var(--text-main)";
@@ -422,7 +447,7 @@
                         const labels = recognizer.wordLabels();
                         
                         const thresholds = {
-                            "あー": 0.88,
+                            "まあ": 0.85,
                             "えー": 0.95,
                             "えっと": 0.85
                         };
@@ -436,9 +461,9 @@
                             const label = labels[i];
                             const score = scores[i];
 
-                            if (label === "フィラー" || label.includes("あー") || label.includes("えー") || label.includes("えっと")) {
+                            if (label === "フィラー" || label.includes("まあ") || label.includes("えー") || label.includes("えっと")) {
                                 let currentThreshold = defaultThreshold;
-                                if (label.includes("あー")) currentThreshold = thresholds["あー"];
+                                if (label.includes("まあ")) currentThreshold = thresholds["まあ"];
                                 else if (label.includes("えー")) currentThreshold = thresholds["えー"];
                                 else if (label.includes("えっと")) currentThreshold = thresholds["えっと"];
 
@@ -451,9 +476,17 @@
                         }
 
                         if (isDetected) {
-                            const recentText = currentSubtitle.slice(-5).toUpperCase();
-                            if (detectedWord.includes("えー") && recentText.includes("AI")) {
+                            const cleanRecentText = currentSubtitle.slice(-8).replace(/[、。！？\s]/g, "");
+                            const lastChar = cleanRecentText.slice(-1); 
+                            const recent5 = currentSubtitle.slice(-5).toUpperCase();
+
+                            if (detectedWord.includes("えー") && recent5.includes("AI")) {
                                 isDetected = false; 
+                            }
+                            
+                            const e_row_kana = /[えけげせぜてでねへべぺめれ]/;
+                            if (detectedWord.includes("えー") && e_row_kana.test(lastChar)) {
+                                isDetected = false;
                             }
                             
                             if (isDetected) {
@@ -468,11 +501,11 @@
                                     
                                     const displayTime = isSpeaking ? practiceSpeechStartTime : secondsElapsed;
                                     practiceDetectedFillers.push({
-                                        time: displayTime, word: detectedWord || "あー", context: currentSubtitle, 
+                                        time: displayTime, word: detectedWord || "まあ", context: currentSubtitle, 
                                         text: `（AI確信度：${Math.round(fillerScore*100)}% / 直前: ${currentSubtitle || "なし"}）`
                                     });
                                     isShowingPracticeAlert = true;
-                                    liveTranscriptDiv.innerText = `⚡AIが「${detectedWord || "あー"}」を検知！（確信度${Math.round(fillerScore*100)}%）`;
+                                    liveTranscriptDiv.innerText = `⚡AIが「${detectedWord || "まあ"}」を検知！（確信度${Math.round(fillerScore*100)}%）`;
                                     liveTranscriptDiv.style.color = "var(--accent-danger)";
                                     adviceDisplay.innerText = "口癖が出ています。一度間を取りましょう。";
                                     adviceDisplay.style.color = "var(--accent-danger)";
@@ -512,7 +545,6 @@
             }
         });
 
-        // 本番モード用
         let mediaRecorderActual, audioChunks = [], isActualRecording = false;
         const btnActualRecord = document.getElementById('btn-actual-record'), apiKeyInput = document.getElementById('api-key-input');
 
@@ -559,7 +591,9 @@
             formData.append('model', 'whisper-1');
             formData.append('language', 'ja');
             formData.append('response_format', 'verbose_json'); 
-            formData.append('prompt', 'えー、本日はお忙しい中、あのー、あー、お集まりいただき、えっと、えっとー、ありがとうございます。');
+            
+            // ★修正箇所：Whisperのプロンプトを強力に書き換え、フィラーの勝手な削除を防止します
+            formData.append('prompt', 'これは話し言葉の書き起こしです。言い淀みやフィラー（えー、えっと、あのー、まあ、等）も省略せず、発話された通りにすべてそのまま文字に起こしてください。えー、えっと、えー。');
             
             try {
                 const response = await fetch('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { 'Authorization': `Bearer ${apiKey}` }, body: formData });
@@ -583,8 +617,7 @@
             const listContainer = document.getElementById('report-filler-list-container');
             listContainer.innerHTML = '';
 
-            // フィラーの種類ごとのカウント
-            let counts = { "えー": 0, "あー": 0, "えっと": 0, "沈黙": 0, "その他": 0 };
+            let counts = { "えー": 0, "まあ": 0, "えっと": 0, "沈黙": 0, "その他": 0 };
 
             if (practiceDetectedFillers.length === 0) {
                 listContainer.innerHTML = '<li class="filler-item" style="color: var(--text-dim);">検知されませんでした。完璧なペースです！</li>';
@@ -594,9 +627,8 @@
                     const fs = (filler.time % 60).toString().padStart(2, '0');
                     listContainer.innerHTML += `<li class="filler-item"><span class="filler-time">${fm}:${fs}</span><div style="flex:1;"><span class="filler-word-hybrid">${filler.word}</span><span class="filler-desc">${filler.text}</span></div></li>`;
                     
-                    // カウントの集計
                     if(filler.word.includes("えー")) counts["えー"]++;
-                    else if(filler.word.includes("あー")) counts["あー"]++;
+                    else if(filler.word.includes("まあ")) counts["まあ"]++;
                     else if(filler.word.includes("えっと")) counts["えっと"]++;
                     else if(filler.word.includes("沈黙")) counts["沈黙"]++;
                     else counts["その他"]++;
@@ -608,7 +640,9 @@
                 practiceDetectedFillers.forEach(f => {
                     const tm = Math.floor(f.time / 60).toString().padStart(2, '0');
                     const ts = (f.time % 60).toString().padStart(2, '0');
-                    fullTextHtmlArray.push(`<div style="margin-bottom: 8px;"><span style="color:var(--text-dim); margin-right:10px; font-family:monospace;">${tm}:${ts}</span><span class="highlight-filler">${f.word}</span></div>`);
+                    if (!f.word.includes("沈黙")) {
+                        fullTextHtmlArray.push(`<div style="margin-bottom: 8px;"><span style="color:var(--text-dim); margin-right:10px; font-family:monospace;">${tm}:${ts}</span><span class="highlight-filler">${f.word}</span></div>`);
+                    }
                 });
                 if(fullTextHtmlArray.length === 0) fullTextHtmlArray.push('（音声が認識されませんでした）');
             } else {
@@ -621,30 +655,56 @@
                     
                     const fillersInThisSegment = practiceDetectedFillers.filter((f, i) => {
                         if (processedFillerIndices.has(i)) return false;
+                        if (f.word.includes("沈黙")) { processedFillerIndices.add(i); return false; }
+                        if (f.text.includes("字幕から")) { processedFillerIndices.add(i); return false; } 
                         return (index + 1 === practiceAllTranscripts.length) ? f.time >= startTime : f.time >= startTime && f.time < nextTime;
                     });
 
-                    let modifiedText = t.text, inlineFillersHtml = '', independentFillersHtmlArray = [];
+                    let baseText = t.text;
+                    let insertions = [];
+                    
                     fillersInThisSegment.forEach((f) => {
-                        let context = f.context.replace(/[あーえー]+$/, '').trim();
-                        if (context.length > 10) context = context.slice(-10);
-                        let insertIndex = context !== "" ? modifiedText.indexOf(context) : -1;
-                        if (insertIndex !== -1) insertIndex += context.length;
+                        let context = f.context.replace(/[まあえー]+$/, '').trim();
+                        if (context.length > 5) context = context.slice(-5); 
+                        let insertIndex = context !== "" ? baseText.indexOf(context) : -1;
                         
                         if (insertIndex !== -1) {
-                            modifiedText = modifiedText.slice(0, insertIndex) + `<span class="highlight-filler" style="margin-left: 2px; margin-right: 2px;">${f.word}</span>` + modifiedText.slice(insertIndex);
+                            insertIndex += context.length;
                         } else {
-                            const refTime = t.endTime !== undefined ? t.endTime : t.time;
-                            if (f.time - refTime <= 2.5) inlineFillersHtml += `<span class="highlight-filler" style="margin-left: 8px;">${f.word}</span>`;
-                            else independentFillersHtmlArray.push(`<div style="margin-bottom: 8px;"><span style="color:var(--text-dim); margin-right:10px; font-family:monospace;">${Math.floor(f.time/60).toString().padStart(2,'0')}:${(f.time%60).toString().padStart(2,'0')}</span><span class="highlight-filler">${f.word}</span></div>`);
+                            const duration = (t.endTime !== undefined ? t.endTime : nextTime) - t.time;
+                            if (duration > 0) {
+                                const ratio = (f.time - t.time) / duration;
+                                insertIndex = Math.floor(baseText.length * Math.min(Math.max(ratio, 0), 1));
+                            } else {
+                                insertIndex = baseText.length;
+                            }
                         }
+                        insertions.push({ index: insertIndex, word: f.word });
                         processedFillerIndices.add(practiceDetectedFillers.indexOf(f));
                     });
-                    fullTextHtmlArray.push(`<div style="margin-bottom: 8px;"><span style="color:var(--text-dim); margin-right:10px; font-family:monospace;">${tm}:${ts}</span>${modifiedText}${inlineFillersHtml}</div>`);
-                    fullTextHtmlArray = fullTextHtmlArray.concat(independentFillersHtmlArray);
+
+                    insertions.sort((a, b) => b.index - a.index);
+                    insertions.forEach(ins => {
+                        baseText = baseText.slice(0, ins.index) + `__TM_FILLER_${ins.word}__` + baseText.slice(ins.index);
+                    });
+
+                    let finalHtml = baseText.replace(/(まあ+|えー+|あのー+|えっとー+|えっと+|んー+|うー+|おー+)/g, match => {
+                        return `<span class="highlight-filler">${match}</span>`;
+                    });
+
+                    finalHtml = finalHtml.replace(/__TM_FILLER_([^_]+)__/g, (match, p1) => {
+                        return `<span class="highlight-filler" style="margin: 0 4px;">${p1}</span>`;
+                    });
+
+                    fullTextHtmlArray.push(`<div style="margin-bottom: 8px;"><span style="color:var(--text-dim); margin-right:10px; font-family:monospace;">${tm}:${ts}</span>${finalHtml}</div>`);
                 });
+                
                 practiceDetectedFillers.forEach((f, index) => {
-                    if (!processedFillerIndices.has(index)) fullTextHtmlArray.push(`<div style="margin-bottom: 8px;"><span style="color:var(--text-dim); margin-right:10px; font-family:monospace;">${Math.floor(f.time/60).toString().padStart(2,'0')}:${(f.time%60).toString().padStart(2,'0')}</span><span class="highlight-filler">${f.word}</span></div>`);
+                    if (!processedFillerIndices.has(index) && !f.word.includes("沈黙") && !f.text.includes("字幕から")) {
+                        const fm = Math.floor(f.time / 60).toString().padStart(2, '0');
+                        const fs = (f.time % 60).toString().padStart(2, '0');
+                        fullTextHtmlArray.push(`<div style="margin-bottom: 8px;"><span style="color:var(--text-dim); margin-right:10px; font-family:monospace;">${fm}:${fs}</span><span class="highlight-filler">${f.word}</span></div>`);
+                    }
                 });
             }
 
@@ -655,7 +715,6 @@
             document.getElementById('report-avg-bpm').innerHTML = `${bpm}<span>文字/分</span>`;
             document.getElementById('report-title-label').innerHTML = '<i class="fa-solid fa-file-lines"></i> 練習の全文文字起こし（AI検知フィラー統合版）';
 
-            // コピー用データの作成と画面へのサマリー表示
             let mostFrequent = "なし";
             let maxCount = 0;
             for (let word in counts) {
@@ -674,18 +733,12 @@
                 comment = `全体で${practiceFillerCount}回のアラートがありました。言葉に詰まる（沈黙する）癖が見られます。`;
             }
 
-            // ★画面上にコメントを表示
             document.getElementById('report-summary-text').innerText = comment;
             document.getElementById('report-summary-msg').style.display = 'flex';
 
             currentReportData = {
-                mode: "練習モード",
-                time: `${m}分${s}秒`,
-                charCount: charCount,
-                bpm: bpm,
-                totalFillers: practiceFillerCount,
-                details: counts,
-                comment: comment
+                mode: "練習モード", time: `${m}分${s}秒`, charCount: charCount, bpm: bpm,
+                totalFillers: practiceFillerCount, details: counts, comment: comment
             };
         }
 
@@ -700,6 +753,7 @@
             let fillerCount = 0;
             let fullTextHtmlArray = [];
             let fullRawText = "";
+            let counts = { "えー": 0, "まあ": 0, "えっと": 0, "沈黙": 0, "その他": 0 };
 
             if (whisperData.segments && whisperData.segments.length > 0) {
                 whisperData.segments.forEach(segment => {
@@ -709,8 +763,12 @@
                     
                     fullRawText += segment.text;
 
-                    const highlightedText = segment.text.replace(/(あー+|えー+|あのー+|えっとー+|えっと+|んー+|うー+|おー+)/g, (match) => { 
+                    const highlightedText = segment.text.replace(/(まあ+|えー+|あのー+|えっとー+|えっと+|んー+|うー+|おー+)/g, (match) => { 
                         fillerCount++; 
+                        if(match.includes("えー")) counts["えー"]++;
+                        else if(match.includes("まあ")) counts["まあ"]++;
+                        else if(match.includes("えっと")) counts["えっと"]++;
+                        else counts["その他"]++;
                         return `<span class="highlight-filler">${match}</span>`; 
                     });
 
@@ -724,13 +782,23 @@
             document.getElementById('report-meta').innerText = `収録日: ${new Date().toLocaleDateString('ja-JP')} / 録音時間: ${Math.floor(secondsElapsed / 60).toString().padStart(2, '0')}:${(secondsElapsed % 60).toString().padStart(2, '0')} (本番モード)`;
 
             const charCount = fullRawText.replace(/\s+/g, '').length;
+            const bpm = secondsElapsed > 0 ? Math.round((charCount / secondsElapsed) * 60) : 0;
             document.getElementById('report-filler-count').innerHTML = `${fillerCount}<span>回</span>`;
             document.getElementById('report-char-count').innerHTML = `${charCount}<span>文字</span>`;
-            document.getElementById('report-avg-bpm').innerHTML = `${secondsElapsed > 0 ? Math.round((charCount / secondsElapsed) * 60) : 0}<span>文字/分</span>`;
+            document.getElementById('report-avg-bpm').innerHTML = `${bpm}<span>文字/分</span>`;
             document.getElementById('report-title-label').innerHTML = '<i class="fa-solid fa-file-lines"></i> 本番の全文文字起こし（Whisper API 高精度抽出結果）';
+
+            currentReportData = {
+                mode: "本番モード (Whisper)",
+                time: `${Math.floor(secondsElapsed / 60).toString().padStart(2, '0')}分${(secondsElapsed % 60).toString().padStart(2, '0')}秒`,
+                charCount: charCount,
+                bpm: bpm,
+                totalFillers: fillerCount,
+                details: counts,
+                comment: `Whisperによる高精度な事後解析結果です。全体で${fillerCount}回のフィラーが検出されました。`
+            };
         }
 
-        // コピーボタンの処理
         document.getElementById('btn-copy-stats').addEventListener('click', function() {
             const data = currentReportData;
             if (!data.mode) return;
@@ -744,7 +812,7 @@
 フィラー・沈黙の合計: ${data.totalFillers} 回
 （内訳）
 ・えー: ${data.details["えー"]}回
-・あー: ${data.details["あー"]}回
+・まあ: ${data.details["まあ"]}回
 ・えっと: ${data.details["えっと"]}回
 ・沈黙: ${data.details["沈黙"]}回
 
@@ -768,7 +836,7 @@ ${data.comment}`;
             navItems.forEach(n => n.classList.remove('active'));
             document.getElementById(`view-${lastUsedMode}`).classList.add('active');
             document.querySelector(`[data-target="view-${lastUsedMode}"]`).classList.add('active');
-            currentReportData = {}; // データクリア
+            currentReportData = {}; 
         });
 
         function setupAudioContext() {
